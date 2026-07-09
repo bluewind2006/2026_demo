@@ -1,0 +1,94 @@
+
+-DT가 이상 입력·경계값·프로토콜 위반에 크래시 없이 견고하게 반응하는지를 체계적으로 측정
+-파일 생성됨, 명령 실행함, 파일 읽음파일 생성됨, 명령 실행함, 파일 읽음. 
+-노트북을 open에 접속한 상태로 실행하면 됩니다.
+
+
+python3 robustness_550.py
+
+이 스크립트의 핵심 설계
+헬스체크 기반 판정 — 이게 앞선 도달성 프로브와 결정적으로 다른 점입니다. 각 공격 벡터를 던진 직후 새 TLS 핸드셰이크를 시도해 DT가 살아있는지 확인합니다.
+헬스체크가 실패하면 DT가 그 입력에 다운됐다는 강한 FAIL 증적입니다. 기준선 왕복시간과 비교해 현저한 지연도 WARN으로 잡습니다.
+
+판정 구조 — 어제 확립한 "행위 → 통제 미흡 판정"을 그대로 코드에 반영했습니다:
+PASS(견고): 메시지 거부/무시하고 서비스 정상 유지
+FAIL(win-condition): 벡터 후 5500 접속 불가 지속, 즉 크래시/재부팅/서비스 중단
+
+시험 벡터 4그룹, 21종:
+A(JSON 구조 이상): 깨진 JSON, 빈 페이로드, 타입 오류, 과도한 중첩, 중복 키, 유니코드 남용
+B(경계값): 64KB 문자열, 범위 밖 수치, 필드 폭증, 거대 배열
+C(프레이밍 위반): 길이 prefix 거짓 선언, 바이너리 쓰레기, 캡처에서 본 커스텀 프레임(80 00 00 28...) 변조, slowloris형 부분 전송
+D(파괴적 후보): 급속 재연결, 1MB 페이로드, 널바이트 대량 — 반드시 마지막에, time-boxed로 (어제 원칙)
+
+안전장치 — Phase 1(비파괴)에서 서비스 다운이 감지되면 Phase 2(파괴적 벡터)는 아예 실행하지 않고 중단합니다. 
+다운 감지 시 5초 복구 대기 후 재확인해 일시적 실패와 진짜 다운을 구분합니다. 전체 로그는 robustness_550_log.txt에 저장됩니다.
+
+
+실행 시 주의
+DT를 재부팅시킬 수 있는 시험입니다(특히 Phase 2). provisioning 상태가 초기화될 수 있으니, 재프로비저닝 절차를 미리 확보해 두세요.
+FAIL이 나오면 그 벡터 ID와 로그를 저장해 두시면, 워크북에 정확한 재현 조건으로 기록할 수 있습니다.
+반대로 모든 벡터를 견고하게 통과해도 그 자체가 "입력 검증 견고" PASS 증적입니다.
+
+
+
+550 트래픽 기본
+
+tcp.port == 550
+
+노트북↔DT만 보려면:
+
+ip.addr == 192.168.100.254 && ip.addr == 192.168.100.100 && tcp.port == 550
+
+1. TLS 핸드셰이크 / 인증서 (자체서명 스텁 findings)
+핸드셰이크만:
+tls.handshake && tcp.port == 550
+서버 인증서 메시지(Internet Widgits Pty Ltd 확인용):
+tls.handshake.type == 11
+ClientHello / ServerHello 구분:
+tls.handshake.type == 1    (ClientHello)
+tls.handshake.type == 2    (ServerHello — cipher 0xC028 선택 확인)
+
+인증서를 실제로 보려면: 위 필터 적용 후 해당 패킷 클릭 → 상세창에서 Transport Layer Security → Handshake Protocol: Certificate → Certificate 펼치면 subject/issuer(Internet Widgits Pty Ltd), 유효기간(2016→2116)이 나옵니다. 
+인증서를 파일로 추출하려면 그 Certificate 항목 우클릭 → Export Packet Bytes.
+
+2. DT가 비-TLS 프로브를 거부한 TLS Alert
+tls.record.content_type == 21
+또는 fatal alert만:
+tls.alert_message.level == 2
+
+3. 암호화된 application data (provisioning 실제 명령이 흐르는 곳)
+tls.record.content_type == 23 && tcp.port == 550
+이게 17 03 03... 레코드들입니다. 다만 암호화돼 있어 내용은 세션키 없이는 안 보입니다.
+
+
+
+
+실행 방법
+python3 probe_550_tls.py
+
+
+스크립트가 하는 일
+캡처 실측(TLS 1.2, cipher 0xC028, 자체서명 스텁 인증서, mTLS 아님)을 그대로 반영했습니다. 3단계로 동작합니다:
+STEP 0 — 연결 + server-first 관찰: 550에 TLS 세션을 맺고, TLS 버전·cipher·서버 인증서를 덤프한 뒤, DT가 먼저 데이터를 보내는지 3초 대기합니다.
+ 캡처상 client-first일 가능성이 높지만 확인용입니다.
+
+STEP 1 — 프레이밍 × payload 매트릭스: JSON-over-TLS의 프레이밍 방식이 미상이므로 4가지(raw JSON, 개행 종단, 4바이트 BE/LE 길이 prefix)에 조회성 payload 6종을 조합해 DT 반응을 관측합니다. 
+각 시도는 새 TLS 세션으로 하고, DUT에 부담을 주지 않도록 0.3초 간격을 둡니다.
+반응 분류: DT 응답을 JSON-RESP(파싱 성공 = application 도달), TEXT/BIN-RESP, NO-RESP, RESET, ERR로 자동 분류합니다.
+
+결과 해석
+
+JSON 응답이 나오는 프레이밍이 있으면 → 그게 실제 550 프로토콜의 강한 후보입니다. 무단 클라이언트가 인증 없이 application layer에 도달했다는 뜻. 
+그 프레이밍으로 정상 명령 스키마를 역산하는 다음 단계로 갑니다.
+전부 무응답/거부면 → 세 가지 가능성입니다: 
+(a) 커스텀 바이너리 프레이밍(캡처 idx4의 80 00 00 28...), 
+(b) TLS 후 추가 인증 시퀀스 요구, 
+(c) 정상 앱 평문 없이는 유효 명령 재현 불가 → MITM 캡처가 다음 필수 단계.
+
+한 가지 다시 강조
+이 스크립트는 반응 관측·도달성 측정용이지, "DT가 수락하는 유효 provisioning 명령"을 만드는 게 아닙니다. 
+정상 앱이 550 TLS 위에서 보내는 평문 명령 예시가 아직 없기 때문입니다. 만약 STEP 1에서 전부 무응답이 나오면, 
+그건 실패가 아니라 **"다음은 MITM으로 정상 앱 평문을 봐야 한다"**는 명확한 신호.
+
+
+
