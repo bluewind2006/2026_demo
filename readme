@@ -156,3 +156,12 @@ async def main():
 
 asyncio.run(main())
 연결이 수립되면 그 자체로 "advertisement only" 주장에 대한 결정적 반증 증거입니다
+
+
+
+이 조합은 **Legacy 광고 PDU 중 ADV_IND**에 해당합니다. Legacy(bit4=1)이면서 Connectable+Scannable, non-directed, 그리고 이 리포트 자체는 SCAN_RSP가 아닌(bit3=0) 광고 본체입니다. 확장 광고 리포트가 legacy PDU를 이 비트맵 형태로 표현한 것으로, Bluetooth Core Spec의 legacy Event_Type 매핑에서 ADV_IND = 0b10011(0x13)과 정확히 일치합니다.
+ADV_IND는 BLE에서 가장 일반적인 "연결 가능 + 스캔 응답 가능" 광고입니다. 즉 이 기기는 주변에 "나와 연결할 수 있고(Connectable), 추가 정보를 요청하면 응답한다(Scannable)"고 방송하고 있는 것입니다.
+무엇이 문제인가
+문제의 본질은 광고 자체가 아니라 표방된 사양과 실제 동작의 불일치입니다.
+
+Connectable = 1이 관찰됨: 제조사가 이 BLE 인터페이스를 "광고 전용(연결 기능 없음)"이라고 기술했다면, 광고 PDU가 ADV_NONCONN_IND(연결 불가, Event_Type에서 Connectable=0)여야 사양과 일치합니다. 그런데 실제로는 ADV_IND로 Connectable 비트가 켜져 있으므로, 링크 계층에서 연결 요청(CONNECT_IND)을 수락할 수 있는 상태로 노출되어 
