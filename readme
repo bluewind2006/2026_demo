@@ -100,3 +100,59 @@ RY/CM Suf — 인증서 자체의 충분성 판정 대상입니다.
 이것이 이전에 정리하신 CM-1/RY-1 Suff 잠정 findings(스텁 인증서, 클라이언트 인증 부재)와 정확히 같은 축입니다.
 UM — 이 인증서가 엔티티 인증 수단으로 쓰인다면, 인증 강도의 문제(검증되지 않는 신원)로 UM 계층에서도 검토.
 
+
+
+. HCI 로그에서 PDU 타입 확인 (수집한 증거 기반)
+LE Extended Advertising Report 이벤트에는 각 광고의 속성을 나타내는 Event_Type 필드(2바이트 비트맵)가 있습니다. 
+여기서 하위 비트들이 광고 성격을 알려줍니다.
+
+bit 0 = Connectable
+bit 1 = Scannable
+bit 2 = Directed
+bit 3 = Scan Response
+bit 4 = Legacy(레거시 광고 여부)
+
+즉 각 리포트의 Event_Type에서 bit 0(Connectable)이 1이면 연결 가능한 광고입니다. 
+Legacy 광고라면 Event_Type이 legacy PDU 타입으로 매핑되며, ADV_IND(0x13) / ADV_DIRECT_IND는 connectable, ADV_NONCONN_IND(0x10) / ADV_SCAN_IND(0x12)는 non-connectable입니다.
+
+Wireshark에서는 필터로 바로 확인할 수 있습니다.
+# 확장 광고 리포트만
+btle.advertising_header.pdu_type or bthci_evt.le_ext_advts_event_type
+
+# connectable 비트가 켜진 것만 (확장 광고)
+bthci_evt.le_ext_advts_event_type.connectable == 1
+
+tshark로 387건 전체를 일괄 집계하려면:
+tshark -r capture.log -Y "bthci_evt.code == 0x3e" \
+  -T fields \
+  -e bthci_evt.le_ext_advts_event_type \
+  -e bthci_evt.le_ext_advts_event_type.connectable \
+  -e bthci_evt.bd_addr \
+  | sort | uniq -c
+connectable 컬럼이 1로 찍히는 리포트가 하나라도 있으면 "advertisement only" 표방과 배치되는 관찰입니다.
+
+2. 링크 계층 헤더에서 직접 확인 (스니퍼 캡처 시)
+nRF Sniffer 같은 링크 계층 캡처가 있다면 HCI 요약이 아니라 광고 PDU 헤더의 PDU Type 4비트를 직접 볼 수 있어 더 확실합니다.
+Wireshark 필터:
+btle.advertising_header.pdu_type == 0x00   # ADV_IND (connectable)
+
+3. 능동 검증 — 실제로 연결을 시도
+로그상 connectable로 보여도, "정말 연결이 되는가"를 실증하면 findings가 훨씬 견고해집니다. 
+연결 시도가 성공(또는 최소한 CONNECT_IND에 대해 Controller가 연결 절차를 개시)하면 표방 사양과 실제 동작의 불일치가 확정됩니다.
+bash# 스캔 시 flags에서 connectable 여부 표시
+sudo bluetoothctl
+> scan on
+# 대상 주소 확인 후 연결 시도
+> connect AA:BB:CC:DD:EE:FF
+또는 bleak(Python)로:
+pythonimport asyncio
+from bleak import BleakScanner, BleakClient
+
+async def main():
+    dev = await BleakScanner.find_device_by_address("AA:BB:CC:DD:EE:FF", timeout=15)
+    # 스캔 결과에 광고 속성이 담김
+    async with BleakClient(dev) as client:
+        print("connected:", client.is_connected)
+
+asyncio.run(main())
+연결이 수립되면 그 자체로 "advertisement only" 주장에 대한 결정적 반증 증거입니다
