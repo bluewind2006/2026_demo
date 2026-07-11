@@ -57,3 +57,98 @@ nRF Connect가 확인하는 것은 "암호화가 요구되는가 / 링크가 암
 
 정리
 확인 항목nRF Connect 모바일정확히 하려면BLE 스택 Core 버전❌ 직접 불가 (PHY/Ext Adv로 5.0+ 추정만)btsnoop 로그의 LL_VERSION_IND 또는 스니퍼펌웨어/SW 버전✅ DIS(0x180A) read—암호화 요구 여부✅ 페어링 요구·인증 오류로 판단—전송 패킷의 실제 암호화 상태 캡처❌ (복호화된 값만 보임)nRF52840 스니퍼
+
+
+
+nRF Connect로 DUT에 연결하고 HCI 로그를 캡처하여 LL_VERSION_IND에서 Core 버전을 확인하는 전체 절차를 설명하겠습니다.
+전체 흐름 개요
+[준비] Android HCI snoop log 활성화
+   ↓
+[캡처 시작] nRF Connect로 DUT 스캔 → 연결(Connect)
+   ↓         (이 순간 LL_VERSION_IND 교환됨)
+[관찰] GATT enumeration + 페어링 요구 여부 확인
+   ↓
+[추출] HCI 로그 → PC 이동 → tshark로 버전 PDU 분석
+핵심: 연결이 성립되는 순간 링크 계층에서 양쪽이 LL_VERSION_IND를 교환합니다. 이걸 잡으려면 연결 전에 HCI snoop log를 켜두고, 그 상태에서 nRF Connect로 연결해야 합니다.
+
+1단계: Android HCI Snoop Log 활성화 (연결 전 필수)
+nRF Connect 앱 자체는 raw HCI를 저장하지 않으므로, OS 레벨 HCI 로깅을 켜야 LL_VERSION_IND가 기록됩니다.
+
+설정 → 휴대전화 정보 → 빌드번호 7회 탭 → 개발자 옵션 활성화
+설정 → 개발자 옵션 → "Bluetooth HCI 스누프 로그 사용" 켜기
+블루투스를 껐다 켜기 (로깅 시작을 위해 스택 재시작 필요)
+
+
+저장 위치는 기기마다 다릅니다: /data/misc/bluetooth/logs/btsnoop_hci.log 또는 /sdcard/btsnoop_hci.log 등. 삼성 계열은 *#9900# 다이얼 → "Bluetooth SnoopLog" 옵션으로도 제어 가능합니다.
+
+
+2단계: nRF Connect로 스캔 및 연결
+
+nRF Connect 실행 → SCANNER 탭 → Start scan
+DUT 식별 — 앞서 확인된 정보로 특정:
+
+MAC: 00:00:00:00:4b (BLE 타겟)
+Service UUID 0xFEB9, RSSI 강한 것(-28dBm급 = 근접)
+필요시 상단 필터에 RSSI threshold나 이름/주소 입력
+
+
+해당 장치의 CONNECT 버튼 탭
+
+이 연결 시도 순간이 결정적입니다:
+
+연결이 성립되면 → 이전 로그(scan-only)와 달리 이번엔 ACL 채널 + LL 제어 PDU가 생성됩니다
+여기서 LL_VERSION_IND가 양방향 교환됩니다
+
+연결 결과가 두 가지 정보를 동시에 줍니다:
+
+연결 성공 → 앞서 발견한 "Connectable=1, advertisement only 주장" 모순의 실증 (ACM-1 근거 강화)
+연결 실패/즉시 종료 → 제조사의 "미인식 패킷 즉시 연결 종료" 주장 검증
+
+
+3단계: 연결 후 관찰 (GATT + 암호화 요구)
+연결이 유지되면 nRF Connect 화면에서:
+
+GATT enumeration — 서비스·characteristic 트리가 자동 표시됨. 전체 구조를 스크린샷/기록
+암호화 요구 여부 테스트 :
+
+임의 characteristic의 read(↓ 화살표) / write(↑ 화살표) 시도
+페어링 없이 성공 → 링크 암호화 미적용
+"Insufficient Authentication/Encryption" 오류 또는 페어링 팝업(Just Works/Passkey) → 암호화 요구됨 = PASS 방향
+
+
+Device Information Service (0x180A) 있으면 Firmware/SW Revision read (앱 레벨 버전, Core 버전과는 별개)
+
+
+4단계: HCI 로그 추출 및 버전 분석
+
+블루투스 OFF (로그 flush) 후 로그 파일 확보:
+
+ADB 방식 (권장):
+
+
+
+     adb bugreport bugreport.zip
+ 최신 Android는 btsnoop이 bugreport 안에 포함됩니다. 압축 해제 후 `FS/data/misc/bluetooth/logs/` 확인
+
+또는 파일 관리자로 btsnoop_hci.log 직접 복사
+
+
+PC로 이동 후 tshark 분석:
+
+bash   # LL_VERSION_IND 프레임만 추출
+   tshark -r btsnoop_hci.log -Y "btle.control_opcode == 0x0c" \
+     -T fields -e frame.number \
+     -e btle.control.version_number \
+     -e btle.control.company_id \
+     -e btle.control.subversion_number
+해석:
+필드의미예시 값 → 버전version_number (VersNr)BLE Core Spec 버전0x06=4.0, 0x08=4.2, 0x09=5.0, 0x0A=5.1, 0x0B=5.2, 0x0C=5.3, 0x0D=5.4company_id컨트롤러 벤더 (BK7234 제조사)벤더 식별subversion_number구현 서브버전펌웨어 빌드 식별
+중요 — DUT 값과 스마트폰 값 구분:
+
+LL_VERSION_IND는 양쪽이 각각 보냅니다. 로그에 2개가 잡힐 것입니다.
+스마트폰이 보낸 것(Central→Peripheral)과 DUT가 보낸 것(Peripheral→Central)을 방향(handle, 송수신)으로 구분해야 합니다.
+앞서 지적하신 "스마트폰 vs DUT" 혼동을 피하려면, DUT가 송신한 VersNr 이 우리가 원하는 값입니다. company_id가 xxxx계열이면 DUT 것으로 확정할 수 있습니다.
+
+
+요약 체크리스트
+순서작업목적1HCI snoop log ON → BT 재시작연결 전 로깅 준비 (없으면 LL PDU 안 잡힘)2nRF Connect로 DUT 연결연결 성립 = LL_VERSION_IND 교환 발생3GATT enum + 페어링 없이 read/writeSCM-1 암호화 판정4로그 추출 → tshark opcode==0x0cDUT의 Core 버전 확정
