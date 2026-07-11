@@ -1,1 +1,59 @@
 readme
+nRF Connect for Mobile 설치
+
+제작사: Nordic Semiconductor (nRF52840 칩 만드는 그 회사)
+무료
+Android: Google Play 스토어에서 "nRF Connect for Mobile" 검색
+iOS: App Store에서 동일 이름 검색
+
+설치 후 가능한 작업 (추가 하드웨어 없이)
+
+BLE 장치 스캔 — DUT의 advertising 패킷 관찰 (Service UUID 0xFEB9, Company ID 0x00C4 확인)
+GATT enumeration — 연결 후 서비스·characteristic 전체 구조 탐색
+characteristic read / write / notify 구독 — 값 직접 조작(인터페이스 남용 테스트)
+advertising 데이터 raw 확인 — 앞서 발견한 RPA와 public address 동시 노출, AD type 0x1b, Connectable bit 등을 직접 검증 가능.
+
+
+좋은 질문입니다. 두 가지를 구분해서 답하겠습니다 — 하나는 확인 가능하고, 다른 하나는 부분적으로만 가능합니다.
+1. BLE 버전 정보 — △ 부분적으로 가능
+nRF Connect는 직접적인 "BLE 버전" 필드를 딱 보여주지는 않습니다. BLE 버전은 여러 간접 정보를 조합해 추정합니다.
+nRF Connect에서 확인 가능한 것:
+
+연결 파라미터 / PHY — 연결 후 사용 중인 PHY 확인 가능
+
+1M PHY만 → BLE 4.x
+2M PHY 또는 LE Coded PHY 지원 → BLE 5.0 이상 (이게 버전 추정의 핵심 단서)
+
+
+Advertising 종류 — Extended Advertising 사용 시 → BLE 5.0+ (앞서 확인한 LE Extended Advertising Report와 일치)
+Device Information Service (0x180A) — 존재 시 표준 characteristic으로 아래 정보 read:
+
+Firmware Revision, Software Revision, Hardware Revision
+단, 이건 애플리케이션 레벨 펌웨어 버전이지 BLE 스택(Core Spec) 버전이 아닙니다
+
+
+
+정확한 BLE Core 버전(4.2 / 5.0 / 5.2 등)을 확정하려면:
+
+HCI 레벨의 LL Version Indication (LL_VERSION_IND) PDU를 봐야 합니다 — 여기에 Core Spec version number가 들어있습니다
+nRF Connect 모바일 앱은 이 LL 제어 PDU를 노출하지 않습니다. 이건 스니퍼(nRF Sniffer, btlejack)나 HCI 로그 레벨에서만 보입니다
+다만 앞서 분석한 btsnoop HCI 로그에 LL_VERSION_IND가 포함되어 있을 가능성이 있으니, 그 로그를 다시 확인하는 것이 가장 정확합니다
+
+2. 패킷 암호화 여부 — ✅ 확인 가능 (단, 방식 주의)
+nRF Connect로 확인하는 방법:
+
+DUT에 연결을 시도했을 때 페어링/본딩(암호화) 요구 여부로 판단합니다
+
+characteristic read/write 시도 → "Insufficient Authentication/Encryption" 오류 반환 → 암호화(페어링) 요구됨 = LE Security 적용
+페어링 없이 read/write가 그냥 성공 → 암호화 미적용 (링크 레이어 암호화 없음)
+
+
+연결 시 페어링 요청 팝업(Just Works / Passkey / OOB) 이 뜨는지 → 뜬다면 페어링 방식과 보안 등급까지 유추 가능
+
+중요한 구분:
+
+nRF Connect가 확인하는 것은 "암호화가 요구되는가 / 링크가 암호화되는가" 입니다
+실제 전송 패킷이 암호화된 바이트로 나가는지를 눈으로 캡처하려면 → 스니퍼(nRF52840 + nRF Sniffer) 가 필요합니다. 모바일 앱은 자신이 당사자라 복호화된 값을 보여주기 때문입니다
+
+정리
+확인 항목nRF Connect 모바일정확히 하려면BLE 스택 Core 버전❌ 직접 불가 (PHY/Ext Adv로 5.0+ 추정만)btsnoop 로그의 LL_VERSION_IND 또는 스니퍼펌웨어/SW 버전✅ DIS(0x180A) read—암호화 요구 여부✅ 페어링 요구·인증 오류로 판단—전송 패킷의 실제 암호화 상태 캡처❌ (복호화된 값만 보임)nRF52840 스니퍼
