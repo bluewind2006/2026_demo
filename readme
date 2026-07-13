@@ -1,1 +1,75 @@
 readme
+
+
+LE Data Length Change (9건)
+1168, 1489, 1634, 2690, 2766, 4170, 5681, 7266, 7337
+LE Set Extended Scan Enable — CMD+Complete (8건)
+5798, 5802, 5811, 5812, 5813, 5814, 5817, 5818
+LE Set Extended Scan Parameters — CMD+Complete (4건)
+5809, 5810, 5815, 5816
+Vendor Command 0xFD57 — CMD+Complete (6건)
+5803, 5804, 5805, 5806, 5807, 5808
+Unknown 0x62 (1건)
+7878
+Malformed Packet (1건)
+7879
+
+
+광고만 제외: !(bthci_evt.le_meta_subevent==0x0d)
+DLE만: bthci_evt.le_meta_subevent==0x07
+스캔 제어만: bthci_cmd.opcode==0x2042 || bthci_cmd.opcode==0x2041
+Vendor만: bthci_cmd.opcode==0xfd57
+
+
+
+서비스 탐색 (11:15:54.431~.501)
+DT가 제공하는 GATT 구조가 드러납니다:
+서비스 UUID               성격   주요 특성
+0x1800 Generic Access표준      Device Name, Appearance, Resolvable Private Address Only (0x2AC9)
+0x1801 Generic Attribute표준Service Changed, Database Hash0000a00a-...커스텀b001~b00d (R/W/N/I 혼합)
+0000feb9-...준표준HTTP Status, HTTPS Security, TDS Control Point, Object 관련
+0000fd31-...커스텀c001~c013 (R/W/N 혼합)
+
+a00a와 fd31이  고유 프로비저닝/제어 인터페이스로 추정
+
+③ 특성 값 읽기 (11:15:59.753~11:16:10.509) — 18개 특성
+주요 관측값:
+0x2A00 Device Name       → 0 bytes (빈 값)
+0x2AC9 RPA Only          → 0 bytes (미설정)  
+0x2B29 Client Features   → 0x00 "No features"
+0x2B2A Database Hash     → E1-D1-D8-D5-...-DF-34 (16바이트)
+0000b006               → 00-64-30
+0x2ABB HTTPS Security     → 07-CA-69-5D-... (32바이트, "1바이트 기대인데 초과" 경고)
+0x2ABD OTS Feature        → 01-05-06
+핵심 소견:
+
+Resolvable Private Address Only (0x2AC9)가 0 bytes → RPA 정책 미설정. 프라이버시 측면 잠재 소견
+HTTPS Security (0x2ABB)가 정의 길이(1바이트)를 벗어난 32바이트 반환 → 특성 규격 위반 또는 커스텀 용도 전용
+
+
+④ 본딩 (Pairing) — 가장 중요한 부분 (11:16:02~11:16:12)
+11:16:02.069  BOND_STATE_CHANGED → BONDING (11)
+11:16:02.085  PAIRING_VARIANT: CONSENT
+11:16:12.727  BOND_STATE_CHANGED → BONDED (12)
+              Device bonded
+
+PAIRING_VARIANT: CONSENT = Just Works 방식
+
+사용자 동의(팝업 확인)만으로 페어링, PIN/Passkey/OOB 입력 없음
+MITM(중간자 공격) 방어 없음
+
+
+pre-shared key(사전 공유 키)를 사용한다는 증거 없음 — 오히려 PSK/Passkey 미사용을 입증
+본딩에 약 10초 소요 (사용자 동의 대기)
+
+⑤ 알림/지시 활성화 (11:16:21) — 8개 CCCD 설정
+0x2A05 Service Changed        → Indications enabled (0x0200)
+0000b003, 0000b00c, 0000c003, 0000c013 → Notifications (0x0100)
+0000b004, 0x2AB8, 0x2AC2      → Indications (0x0200)
+"All services enabled"
+→ 본딩 후 각 커스텀 특성의 알림을 구독. 정상 셋업 완료 상태.
+
+⑥ 알림 수신 — 셋업 채널의 실체 (11:16:55~11:27:50)
+0000c013 특성이 약 1분 간격으로 동일 JSON을 반복 push:
+
+{"deviceId":"25e15a9c-4bc8-12aa-96c4-c8478c53624a"}
