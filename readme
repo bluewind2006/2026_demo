@@ -73,3 +73,24 @@ pre-shared key(사전 공유 키)를 사용한다는 증거 없음 — 오히려
 0000c013 특성이 약 1분 간격으로 동일 JSON을 반복 push:
 
 {"deviceId":"25e15a9c-4bc8-12aa-96c4-c8478c53624a"}
+
+시나리오별 최종 수행 위치 (정리)
+#2 MQTT DNS 스푸핑 (Path B):
+
+DNS 위조:  라즈베리파이 (dnsmasq) — Kali 아님
+가짜 브로커: VMware Kali 또는 라즈베리파이 (mosquitto, L3 작업이라 VM으로 충분)
+트래픽 관찰: OpenWRT (tcpdump)
+→ Kali는 브로커 호스트 역할만. 핵심은 OpenWRT
+
+#3 DNS 견고성 (Path A):
+VMware Kali 를 DT의 AP(open)에 연결 → nsd_robustness.py 실행
+단순 UDP 질의라 VM으로 충분 (무선 특수기능 불필요)
+→ VMware Kali로 OK
+
+#4 rogue AP + 5500 (Path A, 가장 까다로움):
+AP mode 하드웨어 필수 → VMware Kali + USB Wi-Fi 어댑터 passthrough
+또는 라즈베리파이 + USB Wi-Fi 어댑터 (Pi는 하드웨어 직접 제어라 더 안정적)
+→ VM이든 Pi든, AP mode 지원 USB 어댑터가 관건. check_ap_capable.sh로 먼저 확인
+
+BLE:
+iPhone(nRF Connect) — 노트북/Kali 아님 (동글 정책 차단)
