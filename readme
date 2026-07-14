@@ -1,18 +1,4 @@
 readme
 
 
-1. "Bluetooth connection – advertise device for connectivity setup"
- LE Connection Complete(0x3E/0x01, 0x0A), Encryption Change(0x08) 이벤트가 0건 
-이 캡처는 스캐너가 광고만 수신한 로그
 
-Random 주소/RPA로 광고, 320개 
-Extended Adv event_type 분포: 0x0013(1,263) 0x0010(2,238) 0x001B(499)… → Connectable 비트(bit0=1)가 세팅된 프레임이 
-다수 존재 (0x0013, 0x001B, 0x0011 계열). "advertise only" 주장 대비 Connectable=1 
-
-
-3. nRF Connect에서 write한 패킷 포함 여부
-nRF 로그에는 실제 write가 포함되어 있습니다. 
-단, 특성 값(characteristic value) write가 아니라 CCCD(0x2902) descriptor write입니다.
-
-writeDescriptor(0x2902, value=0x0200) = Indication enable, value=0x0100 = Notification enable → 총 8회 (0x2A05, b003, b004, b00c, 2AB8, 2AC2, c003, c013).
-특성 값을 직접 쓴 write(예: b002/b005/c001 등 [W] 특성)는 nRF 로그에 없음 — 읽기(Read) 18건 + CCCD write 8건만 존재.
